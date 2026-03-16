@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ReelTranscribe — Verbatim Transcription</title>
+    <style>
+        :root {
+            --bg: #0a0a0f;
+            --surface: #13131a;
+            --surface2: #1a1a24;
+            --border: #2a2a3a;
+            --accent: #6c5ce7;
+            --accent-hover: #7c6cf7;
+            --text: #e8e8f0;
+            --text-dim: #8888a0;
+            --success: #00b894;
+            --error: #e74c3c;
+            --warning: #f39c12;
+            --radius: 12px;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Courier New', monospace;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 860px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 48px;
+        }
+
+        h1 {
+            font-size: 28px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            margin-bottom: 8px;
+            background: linear-gradient(135deg, var(--accent), #a29bfe);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        header p {
+            color: var(--text-dim);
+            font-size: 13px;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 0;
+            margin-bottom: 24px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow: hidden;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 14px;
+            text-align: center;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            background: var(--surface);
+            border: none;
+            color: var(--text-dim);
+            transition: all 0.2s;
+            font-family: inherit;
+        }
+
+        .tab:not(:last-child) { border-right: 1px solid var(--border); }
+        .tab.active { background: var(--accent); color: white; }
+        .tab:hover:not(.active) { background: var(--surface2); color: var(--text); }
+
+        /* Input Panels */
+        .input-panel {
+            display: none;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 28px;
+        }
+
+        .input-panel.active { display: block; }
+
+        label {
+            display: block;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-dim);
+            margin-bottom: 10px;
+        }
+
+        input[type="text"], input[type="url"] {
+            width: 100%;
+            padding: 14px 16px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            font-family: inherit;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        input:focus { border-color: var(--accent); }
+
+        /* File Upload */
+        .upload-zone {
+            border: 2px dashed var(--border);
+            border-radius: 8px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            position: relative;
+        }
+
+        .upload-zone:hover { border-color: var(--accent); background: rgba(108, 92, 231, 0.05); }
+        .upload-zone.dragover { border-color: var(--accent); background: rgba(108, 92, 231, 0.1); }
+
+        .upload-zone input { display: none; }
+        .upload-zone .icon { font-size: 32px; margin-bottom: 12px; }
+        .upload-zone .label { font-size: 14px; color: var(--text-dim); }
+        .upload-zone .formats { font-size: 11px; color: var(--text-dim); margin-top: 8px; opacity: 0.6; }
+        .file-name { margin-top: 10px; font-size: 13px; color: var(--success); font-weight: 600; }
+
+        /* Button */
+        .btn {
+            width: 100%;
+            padding: 16px;
+            margin-top: 20px;
+            background: var(--accent);
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-family: inherit;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .btn:hover:not(:disabled) { background: var(--accent-hover); transform: translateY(-1px); }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+        /* Status */
+        .status-bar {
+            display: none;
+            margin-top: 24px;
+            padding: 16px 20px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+        }
+
+        .status-bar .status-text {
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .spinner {
+            width: 16px; height: 16px;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .step-label { color: var(--text-dim); }
+
+        /* Results */
+        .results {
+            display: none;
+            margin-top: 32px;
+        }
+
+        .result-section {
+            margin-bottom: 24px;
+        }
+
+        .result-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .result-header h3 {
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--accent);
+        }
+
+        .copy-btn {
+            padding: 6px 14px;
+            background: transparent;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-dim);
+            font-family: inherit;
+            font-size: 11px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .copy-btn:hover { border-color: var(--accent); color: var(--accent); }
+        .copy-btn.copied { border-color: var(--success); color: var(--success); }
+
+        .result-box {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px;
+            font-size: 14px;
+            line-height: 1.8;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 500px;
+            overflow-y: auto;
+        }
+
+        .result-box::-webkit-scrollbar { width: 6px; }
+        .result-box::-webkit-scrollbar-track { background: transparent; }
+        .result-box::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+        .meta-bar {
+            display: flex;
+            gap: 20px;
+            padding: 12px 0;
+            font-size: 12px;
+            color: var(--text-dim);
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 20px;
+        }
+
+        .meta-bar span strong { color: var(--text); }
+
+        .error-msg {
+            display: none;
+            margin-top: 16px;
+            padding: 14px 18px;
+            background: rgba(231, 76, 60, 0.1);
+            border: 1px solid rgba(231, 76, 60, 0.3);
+            border-radius: 8px;
+            color: var(--error);
+            font-size: 13px;
+        }
+
+        /* Health indicator */
+        .health {
+            position: fixed;
+            bottom: 16px;
+            right: 16px;
+            font-size: 11px;
+            color: var(--text-dim);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .health-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--error);
+        }
+
+        .health-dot.ok { background: var(--success); }
+
+        @media (max-width: 600px) {
+            .container { padding: 20px 12px; }
+            h1 { font-size: 22px; }
+            .tab { padding: 10px 6px; font-size: 11px; }
+            .input-panel { padding: 18px; }
+            .upload-zone { padding: 24px; }
+            .meta-bar { flex-wrap: wrap; gap: 10px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>ReelTranscribe</h1>
+            <p>Verbatim transcription from Instagram Reels, videos &amp; audio</p>
+        </header>
+
+        <!-- Tabs -->
+        <div class="tabs">
+            <button class="tab active" data-tab="url">Instagram URL</button>
+            <button class="tab" data-tab="video">Upload Video</button>
+            <button class="tab" data-tab="audio">Upload Audio</button>
+        </div>
+
+        <!-- URL Input -->
+        <div class="input-panel active" id="panel-url">
+            <label>Instagram Reel URL</label>
+            <input type="url" id="reel-url" placeholder="https://www.instagram.com/reel/..." autocomplete="off">
+            <button class="btn" onclick="submitURL()">Transcribe</button>
+        </div>
+
+        <!-- Video Upload -->
+        <div class="input-panel" id="panel-video">
+            <label>Video File</label>
+            <div class="upload-zone" id="video-zone">
+                <input type="file" id="video-file" accept=".mp4,.mov,.mkv,.webm,.avi">
+                <div class="icon">&#127916;</div>
+                <div class="label">Drop video here or click to browse</div>
+                <div class="formats">MP4, MOV, MKV, WebM, AVI — max 500 MB</div>
+                <div class="file-name" id="video-filename"></div>
+            </div>
+            <button class="btn" onclick="submitFile('video')">Transcribe</button>
+        </div>
+
+        <!-- Audio Upload -->
+        <div class="input-panel" id="panel-audio">
+            <label>Audio File</label>
+            <div class="upload-zone" id="audio-zone">
+                <input type="file" id="audio-file" accept=".mp3,.wav,.m4a,.ogg,.flac,.aac">
+                <div class="icon">&#127925;</div>
+                <div class="label">Drop audio here or click to browse</div>
+                <div class="formats">MP3, WAV, M4A, OGG, FLAC, AAC — max 500 MB</div>
+                <div class="file-name" id="audio-filename"></div>
+            </div>
+            <button class="btn" onclick="submitFile('audio')">Transcribe</button>
+        </div>
+
+        <!-- Status -->
+        <div class="status-bar" id="status-bar">
+            <div class="status-text">
+                <div class="spinner"></div>
+                <span id="status-msg">Initializing...</span>
+            </div>
+        </div>
+
+        <!-- Error -->
+        <div class="error-msg" id="error-msg"></div>
+
+        <!-- Results -->
+        <div class="results" id="results">
+            <div class="meta-bar" id="meta-bar"></div>
+
+            <div class="result-section">
+                <div class="result-header">
+                    <h3>Full Mouth Word Transcript</h3>
+                    <button class="copy-btn" onclick="copyText('verbatim')">Copy</button>
+                </div>
+                <div class="result-box" id="verbatim-output"></div>
+            </div>
+
+            <div class="result-section">
+                <div class="result-header">
+                    <h3>Clean Editable Script</h3>
+                    <button class="copy-btn" onclick="copyText('clean')">Copy</button>
+                </div>
+                <div class="result-box" id="clean-output"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Health Indicator -->
+    <div class="health" id="health">
+        <div class="health-dot" id="health-dot"></div>
+        <span id="health-label">checking...</span>
+    </div>
+
+    <script>
+        // ---- Tab switching ----
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.input-panel').forEach(p => p.classList.remove('active'));
+                tab.classList.add('active');
+                document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+                hideResults();
+            });
+        });
+
+        // ---- File upload zones ----
+        ['video', 'audio'].forEach(function(type) {
+            var zone = document.getElementById(type + '-zone');
+            var input = document.getElementById(type + '-file');
+            var nameEl = document.getElementById(type + '-filename');
+
+            zone.addEventListener('click', function() { input.click(); });
+            zone.addEventListener('dragover', function(e) { e.preventDefault(); zone.classList.add('dragover'); });
+            zone.addEventListener('dragleave', function() { zone.classList.remove('dragover'); });
+            zone.addEventListener('drop', function(e) {
+                e.preventDefault();
+                zone.classList.remove('dragover');
+                if (e.dataTransfer.files.length) {
+                    input.files = e.dataTransfer.files;
+                    nameEl.textContent = e.dataTransfer.files[0].name;
+                }
+            });
+            input.addEventListener('change', function() {
+                if (input.files.length) nameEl.textContent = input.files[0].name;
+            });
+        });
+
+        // ---- State ----
+        var currentJobId = null;
+        var pollInterval = null;
+
+        function showStatus(msg) {
+            document.getElementById('status-bar').style.display = 'block';
+            document.getElementById('status-msg').textContent = msg;
+            document.getElementById('error-msg').style.display = 'none';
+        }
+
+        function hideStatus() {
+            document.getElementById('status-bar').style.display = 'none';
+        }
+
+        function showError(msg) {
+            hideStatus();
+            var el = document.getElementById('error-msg');
+            el.textContent = msg;
+            el.style.display = 'block';
+        }
+
+        function hideResults() {
+            document.getElementById('results').style.display = 'none';
+            document.getElementById('error-msg').style.display = 'none';
+            hideStatus();
+        }
+
+        function disableButtons(disabled) {
+            document.querySelectorAll('.btn').forEach(function(b) { b.disabled = disabled; });
+        }
+
+        var STEP_LABELS = {
+            initializing: 'Initializing...',
+            downloading: 'Downloading Instagram Reel...',
+            extracting_audio: 'Extracting audio with FFmpeg...',
+            preparing: 'Preparing files...',
+            transcribing: 'Transcribing with Whisper (this may take a moment)...',
+            formatting: 'Formatting output...',
+            done: 'Complete!'
+        };
+
+        // ---- Submit URL ----
+        async function submitURL() {
+            var url = document.getElementById('reel-url').value.trim();
+            if (!url) return showError('Please enter a URL.');
+
+            hideResults();
+            disableButtons(true);
+            showStatus('Submitting...');
+
+            try {
+                var form = new FormData();
+                form.append('url', url);
+                var res = await fetch('/api/transcribe/url', { method: 'POST', body: form });
+                var data = await res.json();
+                if (!res.ok) throw new Error(data.detail || 'Request failed');
+                startPolling(data.job_id);
+            } catch (e) {
+                showError(e.message);
+                disableButtons(false);
+            }
+        }
+
+        // ---- Submit File ----
+        async function submitFile(type) {
+            var input = document.getElementById(type + '-file');
+            if (!input.files.length) return showError('Please select a file.');
+
+            hideResults();
+            disableButtons(true);
+            showStatus('Uploading...');
+
+            try {
+                var form = new FormData();
+                form.append('file', input.files[0]);
+                var res = await fetch('/api/transcribe/upload', { method: 'POST', body: form });
+                var data = await res.json();
+                if (!res.ok) throw new Error(data.detail || 'Upload failed');
+                startPolling(data.job_id);
+            } catch (e) {
+                showError(e.message);
+                disableButtons(false);
+            }
+        }
+
+        // ---- Poll ----
+        function startPolling(jobId) {
+            currentJobId = jobId;
+            if (pollInterval) clearInterval(pollInterval);
+            pollInterval = setInterval(function() { pollStatus(jobId); }, 1500);
+        }
+
+        async function pollStatus(jobId) {
+            try {
+                var res = await fetch('/api/status/' + jobId);
+                var data = await res.json();
+
+                if (data.status === 'processing' || data.status === 'queued') {
+                    showStatus(STEP_LABELS[data.step] || data.step);
+                } else if (data.status === 'completed') {
+                    clearInterval(pollInterval);
+                    hideStatus();
+                    disableButtons(false);
+                    displayResults(data.result);
+                } else if (data.status === 'failed') {
+                    clearInterval(pollInterval);
+                    disableButtons(false);
+                    showError(data.error || 'Transcription failed.');
+                }
+            } catch (e) {
+                // Network error — keep polling
+            }
+        }
+
+        // ---- Display ----
+        function displayResults(result) {
+            var meta = document.getElementById('meta-bar');
+            var parts = [];
+            if (result.language) parts.push('<span>Language: <strong>' + result.language + '</strong></span>');
+            if (result.duration_seconds) parts.push('<span>Duration: <strong>' + Math.round(result.duration_seconds) + 's</strong></span>');
+            if (result.word_count) parts.push('<span>Words: <strong>' + result.word_count + '</strong></span>');
+            meta.innerHTML = parts.join('');
+
+            document.getElementById('verbatim-output').textContent = result.verbatim_transcript;
+            document.getElementById('clean-output').textContent = result.clean_text;
+            document.getElementById('results').style.display = 'block';
+        }
+
+        // ---- Copy ----
+        async function copyText(type) {
+            var el = document.getElementById(type === 'verbatim' ? 'verbatim-output' : 'clean-output');
+            var btn = el.parentElement.querySelector('.copy-btn');
+            try {
+                await navigator.clipboard.writeText(el.textContent);
+                btn.textContent = 'Copied!';
+                btn.classList.add('copied');
+                setTimeout(function() { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+            } catch (err) {
+                var range = document.createRange();
+                range.selectNodeContents(el);
+                window.getSelection().removeAllRanges();
+                window.getSelection().addRange(range);
+                document.execCommand('copy');
+                btn.textContent = 'Copied!';
+                setTimeout(function() { btn.textContent = 'Copy'; }, 2000);
+            }
+        }
+
+        // ---- Health ----
+        async function checkHealth() {
+            try {
+                var res = await fetch('/api/health');
+                var data = await res.json();
+                var dot = document.getElementById('health-dot');
+                var label = document.getElementById('health-label');
+                if (data.healthy) {
+                    dot.classList.add('ok');
+                    label.textContent = 'all systems go';
+                } else {
+                    var missing = Object.entries(data.checks).filter(function(e) { return !e[1]; }).map(function(e) { return e[0]; });
+                    label.textContent = 'missing: ' + missing.join(', ');
+                }
+            } catch (e) { /* ignore */ }
+        }
+        checkHealth();
+
+        // Enter key support for URL
+        document.getElementById('reel-url').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') submitURL();
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: reeltranscribe
+    runtime: docker
+    plan: starter
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+    healthCheckPath: /api/health
