@@ -317,7 +317,12 @@
         <div class="input-panel active" id="panel-url">
             <label>Instagram Reel URL</label>
             <input type="url" id="reel-url" placeholder="https://www.instagram.com/reel/..." autocomplete="off">
-            <button class="btn" onclick="submitURL()">Transcribe</button>
+
+            <div class="url-actions" style="display:flex; gap:12px; flex-wrap:wrap; margin-top:16px;">
+                <button id="transcribe-btn" class="btn" onclick="submitURL()">Transcribe</button>
+                <button id="download-btn" class="btn" type="button">⬇ Download Video</button>
+            </div>
+            <p id="download-status" style="display:none; margin-top:8px; font-size:13px; color: var(--text-dim);"></p>
         </div>
 
         <!-- Video Upload -->
@@ -589,6 +594,114 @@
         document.getElementById('reel-url').addEventListener('keydown', function(e) {
             if (e.key === 'Enter') submitURL();
         });
+
+        // ---- Download button (Instagram video only) ----
+        (function () {
+            const urlInput = document.getElementById('reel-url');
+            const downloadBtn = document.getElementById('download-btn');
+            const downloadStatus = document.getElementById('download-status');
+            const transcribeBtn = document.getElementById('transcribe-btn');
+
+            function isInstagramUrl(val) {
+                return /instagram\.com\/(reel|p|tv)\/[A-Za-z0-9_-]+/i.test((val || '').trim());
+            }
+
+            function setDownloadUI(state, message) {
+                if (downloadStatus) {
+                    downloadStatus.style.display = message ? 'block' : 'none';
+                    downloadStatus.textContent = message || '';
+                }
+
+                if (downloadBtn) downloadBtn.disabled = state === 'loading';
+                if (transcribeBtn) transcribeBtn.disabled = state === 'loading';
+            }
+
+            function updateDownloadVisibility() {
+                if (!urlInput || !downloadBtn) return;
+                const valid = isInstagramUrl(urlInput.value);
+                downloadBtn.disabled = !valid;
+                if (!valid) setDownloadUI('idle', '');
+            }
+
+            if (urlInput) {
+                urlInput.addEventListener('input', updateDownloadVisibility);
+                urlInput.addEventListener('paste', function () {
+                    setTimeout(updateDownloadVisibility, 50);
+                });
+                updateDownloadVisibility();
+            }
+
+            async function pollDownloadJob(jobId) {
+                const interval = 1500;
+                const maxWait = 120000;
+                const deadline = Date.now() + maxWait;
+
+                while (Date.now() < deadline) {
+                    await new Promise((r) => setTimeout(r, interval));
+
+                    const res = await fetch('/api/status/' + jobId);
+                    const data = await res.json();
+
+                    if (data.step) {
+                        const stepMap = {
+                            initializing: '⏳ Starting...',
+                            downloading: '⬇ Downloading video...',
+                            done: '✅ Complete!',
+                        };
+                        setDownloadUI('loading', stepMap[data.step] || `⏳ ${data.step}...`);
+                    }
+
+                    if (data.status === 'completed') {
+                        return data;
+                    } else if (data.status === 'failed') {
+                        throw new Error(data.error || 'Download failed.');
+                    }
+                }
+
+                throw new Error('Timeout: download took too long.');
+            }
+
+            async function startDownload() {
+                const url = (urlInput?.value || '').trim();
+                if (!isInstagramUrl(url)) return;
+
+                hideResults();
+                disableButtons(true);
+                setDownloadUI('loading', '⏳ Starting download...');
+
+                try {
+                    const form = new FormData();
+                    form.append('url', url);
+                    const res = await fetch('/api/download-only', { method: 'POST', body: form });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.detail || 'Failed to start download.');
+
+                    const final = await pollDownloadJob(data.job_id);
+                    setDownloadUI('success', '✅ Download ready — saving...');
+
+                    const filename = final.result?.video_filename;
+                    const downloadUrl = final.result?.video_download_url || `/api/serve-download/${data.job_id}`;
+                    const a = document.createElement('a');
+                    a.href = downloadUrl;
+                    a.download = filename || 'instagram_video.mp4';
+                    a.style.display = 'none';
+                    document.body.appendChild(a);
+                    a.click();
+                    setTimeout(() => document.body.removeChild(a), 500);
+
+                    setTimeout(() => setDownloadUI('idle', ''), 3500);
+                } catch (err) {
+                    setDownloadUI('error', `❌ ${err.message}`);
+                    setTimeout(() => setDownloadUI('idle', ''), 5000);
+                } finally {
+                    disableButtons(false);
+                }
+            }
+
+            if (downloadBtn) {
+                downloadBtn.addEventListener('click', startDownload);
+            }
+        })();
     </script>
 </body>
 </html>
