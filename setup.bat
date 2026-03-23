@@ -32,6 +32,15 @@ if errorlevel 1 (
 )
 echo [OK] FFmpeg found
 
+REM Check Instaloader (optional)
+instaloader --version >nul 2>&1
+if errorlevel 1 (
+    echo [WARNING] instaloader is not installed or not in PATH.
+    echo "pip install instaloader" to enable fallback Instagram downloads.
+) else (
+    echo [OK] Instaloader found
+)
+
 REM Create virtual environment
 echo.
 echo Creating virtual environment...

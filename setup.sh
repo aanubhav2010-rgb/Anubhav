@@ -22,6 +22,14 @@ if ! command -v ffmpeg &> /dev/null; then
 fi
 echo "[OK] FFmpeg found"
 
+# Check Instaloader (optional)
+if ! command -v instaloader &> /dev/null; then
+    echo "[WARNING] instaloader is not installed."
+    echo "Install: pip install instaloader"
+else
+    echo "[OK] Instaloader found"
+fi
+
 # Create virtual environment
 echo ""
 echo "Creating virtual environment..."

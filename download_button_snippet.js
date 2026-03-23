@@ -40,7 +40,7 @@
 
   // ── Helper: Valid Instagram URL check ──────────────────────────────────
   function isInstagramUrl(val) {
-    return /instagram\.com\/(reel|p|tv)\/[A-Za-z0-9_-]+/i.test(val.trim());
+    return /instagram\.com\/(reel|p|tv|reels)\/[A-Za-z0-9_-]+/i.test(val.trim());
   }
 
   // ── URL input pe listen karo ────────────────────────────────────────────

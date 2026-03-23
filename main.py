@@ -89,17 +89,54 @@ def get_openai_client() -> openai.OpenAI:
 def run_cmd(cmd: list[str], timeout: int = 300) -> subprocess.CompletedProcess:
     """Run a shell command with timeout."""
     logger.info(f"Running: {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except FileNotFoundError as e:
+        # Common on Windows when an executable (ffmpeg/yt-dlp/instaloader) isn't on PATH.
+        raise RuntimeError(
+            f"Executable not found: {e.filename}. Ensure it is installed and on your PATH. "
+            "If you're using the bundled version, install the required Python packages: "
+            "pip install -r requirements.txt"
+        ) from e
+
     if result.returncode != 0:
         logger.error(f"Command failed: {result.stderr}")
         raise RuntimeError(result.stderr)
     return result
 
 
+def get_ffmpeg_executable() -> str:
+    """Return a usable ffmpeg executable path.
+
+    The application needs ffmpeg for audio extraction and other operations.
+    Prefer a system-installed ffmpeg, but fall back to the bundled ffmpeg from
+    the `imageio-ffmpeg` package if available.
+    """
+    # 1) Prefer system ffmpeg in PATH
+    system_ffmpeg = shutil.which("ffmpeg")
+    if system_ffmpeg:
+        return system_ffmpeg
+
+    # 2) Fallback to imageio-ffmpeg bundled binary
+    try:
+        import imageio_ffmpeg
+
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+        if ffmpeg_exe and Path(ffmpeg_exe).exists():
+            return str(ffmpeg_exe)
+    except Exception:
+        pass
+
+    raise RuntimeError(
+        "ffmpeg executable not found. Install ffmpeg and ensure it is on your PATH, "
+        "or install the Python package 'imageio-ffmpeg' (e.g. pip install imageio-ffmpeg)."
+    )
+
+
 def _find_video_in_dir(directory: Path) -> Optional[Path]:
-    """Return the first video file found inside *directory*, or None."""
+    """Return the first video file found inside *directory* (recursively), or None."""
     return next(
-        (f for f in directory.glob("*.*") if f.suffix.lower() in ALLOWED_VIDEO_EXT),
+        (f for f in directory.rglob("*.*") if f.suffix.lower() in ALLOWED_VIDEO_EXT),
         None,
     )
 
@@ -121,6 +158,12 @@ def _ytdlp_download(url: str, out_path: Path) -> bool:
         "quiet":                False,
         "no_check_certificate": True,
     }
+
+    try:
+        ffmpeg_path = get_ffmpeg_executable()
+        ydl_opts["ffmpeg_location"] = ffmpeg_path
+    except Exception as e:
+        logger.warning(f"ffmpeg not found; yt-dlp may still work for some URLs (error: {e})")
 
     # Attempt 1 — no cookies
     try:
@@ -147,11 +190,11 @@ def _ytdlp_download(url: str, out_path: Path) -> bool:
 
 
 def _instaloader_download(url: str, tmp_dir: Path) -> Optional[Path]:
-    """
-    Fallback: use instaloader CLI to download a single public Instagram post/reel.
+    """Fallback: use Instaloader to download a single public Instagram post/reel.
+
     Returns the downloaded video Path, or None on failure.
     """
-    match = re.search(r"/(?:reel|p)/([A-Za-z0-9_-]+)", url)
+    match = re.search(r"/(?:reel|reels|p|tv)/([A-Za-z0-9_-]+)", url)
     if not match:
         logger.error(f"Cannot parse Instagram shortcode from URL: {url}")
         return None
@@ -159,18 +202,38 @@ def _instaloader_download(url: str, tmp_dir: Path) -> Optional[Path]:
     shortcode = match.group(1)
     logger.info(f"instaloader shortcode: {shortcode}")
 
-    cmd = [
-        "instaloader",
-        "--no-captions",
-        "--no-metadata-json",
-        "--no-compress-json",
-        "--dirname-pattern", str(tmp_dir),
-        "--filename-pattern", shortcode,
-        "--", shortcode,
-    ]
-
+    # Prefer using the installed `instaloader` CLI; fall back to the Python module if
+    # the CLI is not available.
     try:
+        cmd = [
+            "instaloader",
+            "--no-captions",
+            "--no-metadata-json",
+            "--no-compress-json",
+            "--dirname-pattern", str(tmp_dir),
+            "--filename-pattern", shortcode,
+            "--", shortcode,
+        ]
         run_cmd(cmd, timeout=180)
+    except FileNotFoundError:
+        logger.warning("'instaloader' executable not found. Falling back to Python instaloader module.")
+        try:
+            import instaloader
+
+            loader = instaloader.Instaloader(
+                dirname_pattern=str(tmp_dir),
+                filename_pattern=shortcode,
+                download_comments=False,
+                save_metadata=False,
+                post_metadata_txt_pattern="",
+            )
+            loader.context.log.setLevel(logging.ERROR)
+
+            post = instaloader.Post.from_shortcode(loader.context, shortcode)
+            loader.download_post(post, target=str(tmp_dir))
+        except Exception as e:
+            logger.error(f"instaloader (module) failed: {e}")
+            return None
     except RuntimeError as e:
         logger.error(f"instaloader failed: {e}")
         return None
@@ -228,8 +291,9 @@ def download_instagram_video(url: str) -> Tuple[Optional[Path], Optional[str]]:
 def extract_audio(video_path: Path, dest_dir: Path) -> Path:
     """Extract audio from video using FFmpeg → 16 kHz mono WAV (optimal for Whisper)."""
     audio_path = dest_dir / f"{video_path.stem}.wav"
+    ffmpeg_exe = get_ffmpeg_executable()
     cmd = [
-        "ffmpeg", "-y",
+        ffmpeg_exe, "-y",
         "-i", str(video_path),
         "-vn",
         "-acodec", "pcm_s16le",
@@ -256,8 +320,9 @@ def transcribe_with_whisper(audio_path: Path) -> dict:
     actual_path = audio_path
     if file_size_mb > 24:
         compressed = audio_path.parent / f"{audio_path.stem}_compressed.mp3"
+        ffmpeg_exe = get_ffmpeg_executable()
         run_cmd([
-            "ffmpeg", "-y", "-i", str(audio_path),
+            ffmpeg_exe, "-y", "-i", str(audio_path),
             "-b:a", "64k", "-ar", "16000", "-ac", "1",
             str(compressed),
         ])
@@ -397,8 +462,9 @@ async def process_job(job_id: str, source_type: str, source_path: str, url: Opti
         elif source_type == "audio":
             audio_path = Path(source_path)
             optimal    = tmp_dir / "optimized.wav"
+            ffmpeg_exe = get_ffmpeg_executable()
             run_cmd([
-                "ffmpeg", "-y", "-i", str(audio_path),
+                ffmpeg_exe, "-y", "-i", str(audio_path),
                 "-ar", "16000", "-ac", "1", "-acodec", "pcm_s16le",
                 str(optimal),
             ])
@@ -517,6 +583,108 @@ async def process_download_job(job_id: str, url: str):
 
 
 # ---------------------------------------------------------------------------
+# Story Generation Pipeline
+# ---------------------------------------------------------------------------
+
+# Word targets per duration — based on ~150 words/min natural speaking pace
+STORY_WORD_TARGETS = {30: 75, 45: 115, 60: 155}
+
+STORY_SYSTEM_PROMPT = (
+    "You are a creative social media story writer who specialises in Instagram and WhatsApp Stories. "
+    "You write punchy, engaging, first-person narrative scripts that sound natural when spoken aloud. "
+    "Your stories hook the viewer in the first sentence and leave a strong impression at the end. "
+    "Respond ONLY with the story text — no labels, headers, explanations, or markdown."
+)
+
+
+def generate_story_with_gpt(transcription: str, duration_seconds: int) -> str:
+    """
+    Use OpenAI GPT to craft a Story script from *transcription*.
+    Target word count is derived from *duration_seconds*.
+    """
+    client     = get_openai_client()
+    word_count = STORY_WORD_TARGETS.get(duration_seconds, 75)
+
+    user_prompt = (
+        f"Below is a verbatim transcription of an Instagram Reel.\n\n"
+        f"---\n{transcription}\n---\n\n"
+        f"Write a captivating Story script based on this content. "
+        f"The script must be EXACTLY around {word_count} words so it fits a "
+        f"{duration_seconds}-second Story when read aloud at a natural pace. "
+        f"Make it engaging, punchy, and ready to post as-is."
+    )
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": STORY_SYSTEM_PROMPT},
+            {"role": "user",   "content": user_prompt},
+        ],
+        temperature=0.85,
+        max_tokens=400,
+    )
+    return response.choices[0].message.content.strip()
+
+
+async def process_story_job(job_id: str, url: str, duration_seconds: int):
+    """
+    Background pipeline:
+      1. Download Instagram video
+      2. Extract audio & transcribe (Whisper)
+      3. Generate Story script (GPT-4o-mini)
+    """
+    job     = jobs[job_id]
+    tmp_dir = Path(tempfile.mkdtemp(prefix="story_"))
+
+    try:
+        job["status"] = "processing"
+
+        # ── Step 1: Download ──────────────────────────────────────────────
+        job["step"] = "downloading"
+        logger.info(f"[{job_id}] Story job — downloading: {url}")
+        saved_video_path, dl_error = download_instagram_video(url)
+
+        if not saved_video_path:
+            raise RuntimeError(dl_error or "Video download failed.")
+
+        job["video_file"] = str(saved_video_path)
+
+        # ── Step 2: Extract audio + Transcribe ───────────────────────────
+        job["step"] = "extracting_audio"
+        audio_path  = extract_audio(saved_video_path, tmp_dir)
+
+        job["step"] = "transcribing"
+        logger.info(f"[{job_id}] Transcribing for story...")
+        whisper_result = transcribe_with_whisper(audio_path)
+        transcription  = whisper_result["text"]
+
+        if not transcription.strip():
+            raise RuntimeError("Transcription returned empty — cannot generate story.")
+
+        # ── Step 3: Generate Story ────────────────────────────────────────
+        job["step"] = "generating_story"
+        logger.info(f"[{job_id}] Generating {duration_seconds}s story...")
+        story = generate_story_with_gpt(transcription, duration_seconds)
+
+        job["status"] = "completed"
+        job["step"]   = "done"
+        job["result"] = {
+            "story":              story,
+            "duration_seconds":   duration_seconds,
+            "word_count":         len(story.split()),
+            "source_transcription": transcription,
+        }
+        logger.info(f"[{job_id}] Story complete — {len(story.split())} words.")
+
+    except Exception as e:
+        job["status"] = "failed"
+        job["error"]  = str(e)[:500]
+        logger.error(f"[{job_id}] Story job failed: {e}")
+    finally:
+        cleanup_files(tmp_dir)
+
+
+# ---------------------------------------------------------------------------
 # API Routes  (unchanged)
 # ---------------------------------------------------------------------------
 @app.get("/")
@@ -597,6 +765,50 @@ async def serve_download(job_id: str):
         filename=filename,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@app.post("/api/generate-story")
+async def generate_story(
+    background_tasks: BackgroundTasks,
+    url: str = Form(...),
+    duration_seconds: int = Form(30),
+):
+    """
+    Generate a social-media Story script from an Instagram Reel.
+
+    Steps (all in background):
+      1. Download the Reel
+      2. Transcribe audio (Whisper)
+      3. Generate Story text (GPT-4o-mini)
+
+    Args:
+        url              : Instagram Reel / Post URL
+        duration_seconds : Target story length — 30, 45, or 60
+
+    Poll /api/status/{job_id} until status == "completed".
+    Result keys: story, duration_seconds, word_count, source_transcription
+    """
+    if not url.strip():
+        raise HTTPException(status_code=400, detail="URL is required.")
+
+    if duration_seconds not in (30, 45, 60):
+        raise HTTPException(
+            status_code=400,
+            detail="duration_seconds must be 30, 45, or 60.",
+        )
+
+    job_id = str(uuid.uuid4())[:12]
+    jobs[job_id] = {
+        "status":     "queued",
+        "step":       "initializing",
+        "result":     None,
+        "error":      None,
+        "video_file": None,
+        "type":       "story",
+    }
+
+    background_tasks.add_task(process_story_job, job_id, url.strip(), duration_seconds)
+    return {"job_id": job_id, "status": "queued"}
 
 
 @app.post("/api/transcribe/upload")
@@ -690,15 +902,26 @@ async def download_video(job_id: str):
 async def health():
     """Health check."""
     checks = {
-        "ffmpeg":      shutil.which("ffmpeg") is not None,
-        "yt_dlp":      True,                                 # Python library, always importable
-        "instaloader": shutil.which("instaloader") is not None,
+        "ffmpeg":      True,
+        "yt_dlp":      True,  # Python library, always importable if requirements installed
+        "instaloader": True,
         "openai_key":  bool(os.getenv("OPENAI_API_KEY")),
     }
+
+    try:
+        get_ffmpeg_executable()
+    except Exception:
+        checks["ffmpeg"] = False
+
     try:
         import yt_dlp as _yt  # noqa: F401
     except ImportError:
         checks["yt_dlp"] = False
+
+    try:
+        import instaloader  # noqa: F401
+    except ImportError:
+        checks["instaloader"] = False
 
     all_ok = checks["ffmpeg"] and checks["yt_dlp"] and checks["openai_key"]
     return {"healthy": all_ok, "checks": checks}

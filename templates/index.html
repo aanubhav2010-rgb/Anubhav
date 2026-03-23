@@ -318,9 +318,19 @@
             <label>Instagram Reel URL</label>
             <input type="url" id="reel-url" placeholder="https://www.instagram.com/reel/..." autocomplete="off">
 
-            <div class="url-actions" style="display:flex; gap:12px; flex-wrap:wrap; margin-top:16px;">
+            <div class="url-actions" style="display:flex; gap:12px; flex-wrap:wrap; margin-top:16px; align-items:center;">
+                <label style="font-size:12px; color: var(--text-dim); display:flex; align-items:center; gap:6px;">
+                    Story length:
+                    <select id="story-duration" style="padding:10px 8px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-family:inherit; font-size:12px;">
+                        <option value="30">30s</option>
+                        <option value="45">45s</option>
+                        <option value="60">60s</option>
+                    </select>
+                </label>
+
                 <button id="transcribe-btn" class="btn" onclick="submitURL()">Transcribe</button>
                 <button id="download-btn" class="btn" type="button">⬇ Download Video</button>
+                <button id="story-btn" class="btn" type="button">Generate Story</button>
             </div>
             <p id="download-status" style="display:none; margin-top:8px; font-size:13px; color: var(--text-dim);"></p>
         </div>
@@ -366,7 +376,7 @@
         <div class="results" id="results">
             <div class="meta-bar" id="meta-bar"></div>
 
-            <div class="result-section">
+            <div class="result-section" id="verbatim-section">
                 <div class="result-header">
                     <h3>Full Mouth Word Transcript</h3>
                     <button class="copy-btn" onclick="copyText('verbatim')">Copy</button>
@@ -374,12 +384,20 @@
                 <div class="result-box" id="verbatim-output"></div>
             </div>
 
-            <div class="result-section">
+            <div class="result-section" id="clean-section">
                 <div class="result-header">
                     <h3>Clean Editable Script</h3>
                     <button class="copy-btn" onclick="copyText('clean')">Copy</button>
                 </div>
                 <div class="result-box" id="clean-output"></div>
+            </div>
+
+            <div class="result-section" id="story-section" style="display:none;">
+                <div class="result-header">
+                    <h3>Story Script</h3>
+                    <button class="copy-btn" onclick="copyText('story')">Copy</button>
+                </div>
+                <div class="result-box" id="story-output"></div>
             </div>
         </div>
     </div>
@@ -461,6 +479,7 @@
             extracting_audio: 'Extracting audio with FFmpeg...',
             preparing: 'Preparing files...',
             transcribing: 'Transcribing with Whisper (this may take a moment)...',
+            generating_story: 'Generating story...',
             formatting: 'Formatting output...',
             done: 'Complete!'
         };
@@ -509,6 +528,31 @@
             }
         }
 
+        // ---- Submit Story ----
+        async function submitStory() {
+            var url = document.getElementById('reel-url').value.trim();
+            if (!url) return showError('Please enter a URL.');
+
+            var duration = parseInt(document.getElementById('story-duration').value, 10) || 30;
+
+            hideResults();
+            disableButtons(true);
+            showStatus('Submitting story...');
+
+            try {
+                var form = new FormData();
+                form.append('url', url);
+                form.append('duration_seconds', duration);
+                var res = await fetch('/api/generate-story', { method: 'POST', body: form });
+                var data = await res.json();
+                if (!res.ok) throw new Error(data.detail || 'Request failed');
+                startPolling(data.job_id);
+            } catch (e) {
+                showError(e.message);
+                disableButtons(false);
+            }
+        }
+
         // ---- Poll ----
         function startPolling(jobId) {
             currentJobId = jobId;
@@ -547,14 +591,38 @@
             if (result.word_count) parts.push('<span>Words: <strong>' + result.word_count + '</strong></span>');
             meta.innerHTML = parts.join('');
 
-            document.getElementById('verbatim-output').textContent = result.verbatim_transcript;
-            document.getElementById('clean-output').textContent = result.clean_text;
+            var verbatimSection = document.getElementById('verbatim-section');
+            var cleanSection = document.getElementById('clean-section');
+            var storySection = document.getElementById('story-section');
+
+            if (result.verbatim_transcript) {
+                verbatimSection.style.display = 'block';
+                document.getElementById('verbatim-output').textContent = result.verbatim_transcript;
+            } else {
+                verbatimSection.style.display = 'none';
+            }
+
+            if (result.clean_text) {
+                cleanSection.style.display = 'block';
+                document.getElementById('clean-output').textContent = result.clean_text;
+            } else {
+                cleanSection.style.display = 'none';
+            }
+
+            if (result.story) {
+                storySection.style.display = 'block';
+                document.getElementById('story-output').textContent = result.story;
+            } else {
+                storySection.style.display = 'none';
+            }
+
             document.getElementById('results').style.display = 'block';
         }
 
         // ---- Copy ----
         async function copyText(type) {
-            var el = document.getElementById(type === 'verbatim' ? 'verbatim-output' : 'clean-output');
+            var id = type === 'verbatim' ? 'verbatim-output' : type === 'clean' ? 'clean-output' : 'story-output';
+            var el = document.getElementById(id);
             var btn = el.parentElement.querySelector('.copy-btn');
             try {
                 await navigator.clipboard.writeText(el.textContent);
@@ -601,9 +669,10 @@
             const downloadBtn = document.getElementById('download-btn');
             const downloadStatus = document.getElementById('download-status');
             const transcribeBtn = document.getElementById('transcribe-btn');
+            const storyBtn = document.getElementById('story-btn');
 
             function isInstagramUrl(val) {
-                return /instagram\.com\/(reel|p|tv)\/[A-Za-z0-9_-]+/i.test((val || '').trim());
+                return /instagram\.com\/(reel|p|tv|reels)\/[A-Za-z0-9_-]+/i.test((val || '').trim());
             }
 
             function setDownloadUI(state, message) {
@@ -614,12 +683,14 @@
 
                 if (downloadBtn) downloadBtn.disabled = state === 'loading';
                 if (transcribeBtn) transcribeBtn.disabled = state === 'loading';
+                if (storyBtn) storyBtn.disabled = state === 'loading';
             }
 
             function updateDownloadVisibility() {
                 if (!urlInput || !downloadBtn) return;
                 const valid = isInstagramUrl(urlInput.value);
                 downloadBtn.disabled = !valid;
+                if (storyBtn) storyBtn.disabled = !valid;
                 if (!valid) setDownloadUI('idle', '');
             }
 
@@ -700,6 +771,10 @@
 
             if (downloadBtn) {
                 downloadBtn.addEventListener('click', startDownload);
+            }
+
+            if (storyBtn) {
+                storyBtn.addEventListener('click', submitStory);
             }
         })();
     </script>
