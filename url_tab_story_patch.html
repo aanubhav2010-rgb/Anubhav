@@ -1,0 +1,221 @@
+<!--
+  ╔═══════════════════════════════════════════════════════════════════════════╗
+  ║   ReelTranscribe — Instagram URL Tab: Story Duration Dropdown PATCH      ║
+  ║   Upload Video & Upload Audio tabs: UNCHANGED                            ║
+  ╚═══════════════════════════════════════════════════════════════════════════╝
+
+  Sirf Instagram URL tab mein changes hain.
+  Ye snippet 2 parts mein hai:
+
+    PART A  →  HTML  — existing dropdown ko replace karo (STORY LENGTH label + <select>)
+    PART B  →  JS    — existing story JS logic ko update karo (Auto label + value=0)
+
+  ─────────────────────────────────────────────────────────────────────────────
+  PART A — HTML: Apna existing "Story Length" dropdown iske saath REPLACE karo
+  ─────────────────────────────────────────────────────────────────────────────
+-->
+
+<!-- REPLACE your existing story-length <select> block with this: -->
+<div style="display:flex; align-items:center; gap:10px; margin-top:10px; flex-wrap:wrap;">
+  <label for="url-story-duration"
+         style="font-size:11px; letter-spacing:.08em; color:#9b8ec4; text-transform:uppercase; white-space:nowrap;">
+    Story Length:
+  </label>
+
+  <select id="url-story-duration" style="
+    background:#1a1a2e;
+    color:#c4b8f0;
+    border:1.5px solid #5b3fa0;
+    border-radius:6px;
+    padding:5px 10px;
+    font-size:13px;
+    font-weight:600;
+    cursor:pointer;
+    outline:none;
+    appearance:auto;
+  ">
+    <option value="0"  selected>Auto (match video)</option>
+    <option value="30">30 sec</option>
+    <option value="45">45 sec</option>
+    <option value="60">60 sec</option>
+  </select>
+</div>
+
+
+<!--
+  ─────────────────────────────────────────────────────────────────────────────
+  PART B — JS: Apne existing story JS block mein ye changes karo
+  ─────────────────────────────────────────────────────────────────────────────
+
+  Sabse important 3 changes:
+
+  1.  duration value read karo <select> se (not from pills — ye URL tab ka dedicated dropdown hai)
+  2.  FormData mein "duration_seconds" = selected value (0, 30, 45 ya 60)
+  3.  Result mein "Auto" label dikhao jab duration_mode == "auto"
+
+  Neeche complete standalone script block hai — apne existing URL-tab story
+  script ko iske saath replace karo.
+  ─────────────────────────────────────────────────────────────────────────────
+-->
+
+<script>
+/* ============================================================
+   ReelTranscribe — Instagram URL tab: Generate Story logic
+   Upload Video / Upload Audio tabs: separate script, untouched
+   ============================================================ */
+(function () {
+  "use strict";
+
+  /* ── Element refs — apne actual IDs se match karo ─────────────────────── */
+  const urlInput        = document.getElementById("instagram-url");     // URL <input>
+  const transcribeBtn   = document.getElementById("transcribe-btn");    // Transcribe button
+  const downloadBtn     = document.getElementById("download-btn");      // Download button
+  const durationSelect  = document.getElementById("url-story-duration");// <select> above
+  const storyBtn        = document.getElementById("story-btn");         // Generate Story button
+  const storyOutputWrap = document.getElementById("story-output-wrap"); // output container
+  const storyStatusLine = document.getElementById("story-status-line"); // step label
+  const storyTextarea   = document.getElementById("story-text");        // textarea
+  const storyCopyBtn    = document.getElementById("story-copy-btn");    // Copy button
+  const storyRegenBtn   = document.getElementById("story-regen-btn");   // Regenerate button
+
+  if (!urlInput || !storyBtn || !durationSelect) {
+    console.warn("[Story-URL] Required elements not found. Check IDs.");
+    return;
+  }
+
+  /* ── Helpers ───────────────────────────────────────────────────────────── */
+  function isInstagramUrl(val) {
+    return /instagram\.com\/(reel|p|tv)\/[A-Za-z0-9_-]+/i.test(val.trim());
+  }
+
+  function syncStoryVisibility() {
+    const show = isInstagramUrl(urlInput.value);
+    // Show/hide the duration <select> row and the story button together
+    const durRow = durationSelect?.closest("div") || durationSelect?.parentElement;
+    if (durRow) durRow.style.display = show ? "flex"  : "none";
+    if (storyBtn) storyBtn.style.display = show ? "block" : "none";
+    if (!show && storyOutputWrap) {
+      storyOutputWrap.style.display = "none";
+      if (storyTextarea) storyTextarea.value = "";
+    }
+  }
+
+  urlInput.addEventListener("input", syncStoryVisibility);
+  urlInput.addEventListener("paste", () => setTimeout(syncStoryVisibility, 50));
+
+  /* ── Step labels shown during polling ─────────────────────────────────── */
+  const stepLabels = {
+    initializing:    "⏳ Initializing...",
+    downloading:     "⬇ Downloading video...",
+    extracting_audio:"🎵 Extracting audio...",
+    transcribing:    "📝 Transcribing speech...",
+    generating_story:"✨ Crafting your story...",
+    done:            "✅ Almost there...",
+  };
+
+  /* ── Core: run story generation job ───────────────────────────────────── */
+  async function runStoryJob() {
+    const url = urlInput.value.trim();
+    if (!isInstagramUrl(url)) return;
+
+    const durationVal = parseInt(durationSelect.value, 10);  // 0, 30, 45, or 60
+
+    setStoryState("loading", "⏳ Starting story generation...");
+
+    try {
+      const fd = new FormData();
+      fd.append("url",              url);
+      fd.append("duration_seconds", durationVal);  // 0 = Auto
+
+      const res = await fetch("/api/generate-story", { method: "POST", body: fd });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || `Server error (${res.status})`);
+      }
+
+      const { job_id } = await res.json();
+      const finalJob   = await pollUntilDone(job_id);
+
+      if (finalJob.status === "completed") {
+        const story      = finalJob.result?.story || "";
+        const words      = finalJob.result?.word_count || story.split(" ").length;
+        const effDur     = finalJob.result?.duration_seconds || durationVal;
+        const mode       = finalJob.result?.duration_mode || "manual";
+        const durLabel   = mode === "auto" ? `~${effDur}s (auto)` : `${effDur}s`;
+
+        setStoryState(
+          "done",
+          `✅ Story ready — ${words} words (${durLabel})`,
+          story,
+        );
+      } else {
+        throw new Error(finalJob.error || "Story generation failed.");
+      }
+
+    } catch (err) {
+      setStoryState("error", `❌ Error: ${err.message}`, "");
+    }
+  }
+
+  storyBtn.addEventListener("click",  runStoryJob);
+  storyRegenBtn?.addEventListener("click", runStoryJob);
+
+  /* ── Copy button ───────────────────────────────────────────────────────── */
+  storyCopyBtn?.addEventListener("click", async function () {
+    const text = storyTextarea?.value;
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      this.textContent = "✅ Copied!";
+      setTimeout(() => (this.textContent = "📋 Copy Story"), 2000);
+    } catch {
+      storyTextarea?.select();
+      document.execCommand("copy");
+    }
+  });
+
+  /* ── Poll /api/status/{job_id} ─────────────────────────────────────────── */
+  async function pollUntilDone(jobId, interval = 2500, maxWait = 180000) {
+    const deadline = Date.now() + maxWait;
+
+    while (Date.now() < deadline) {
+      await sleep(interval);
+      const data = await fetch(`/api/status/${jobId}`).then(r => r.json());
+
+      if (data.step && stepLabels[data.step] && storyStatusLine) {
+        storyStatusLine.textContent = stepLabels[data.step];
+      }
+
+      if (data.status === "completed" || data.status === "failed") return data;
+    }
+    throw new Error("Timeout — story took too long. Try again.");
+  }
+
+  /* ── UI state ──────────────────────────────────────────────────────────── */
+  function setStoryState(state, message, storyText) {
+    if (storyOutputWrap) storyOutputWrap.style.display = "block";
+    if (storyStatusLine) storyStatusLine.textContent   = message;
+
+    const allBtns = [transcribeBtn, downloadBtn, storyRegenBtn].filter(Boolean);
+
+    if (state === "loading") {
+      storyBtn.textContent  = "⏳ Generating...";
+      storyBtn.disabled     = true;
+      if (storyRegenBtn) storyRegenBtn.disabled = true;
+      if (storyTextarea)  storyTextarea.value   = "";
+      allBtns.forEach(b => (b.disabled = true));
+
+    } else {
+      storyBtn.textContent  = "✨ GENERATE STORY";
+      storyBtn.disabled     = false;
+      if (storyRegenBtn) storyRegenBtn.disabled = false;
+      if (storyTextarea && storyText !== undefined) storyTextarea.value = storyText;
+      allBtns.forEach(b => (b.disabled = false));
+    }
+  }
+
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+})();
+</script>

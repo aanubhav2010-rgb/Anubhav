@@ -586,8 +586,11 @@ async def process_download_job(job_id: str, url: str):
 # Story Generation Pipeline
 # ---------------------------------------------------------------------------
 
-# Word targets per duration — based on ~150 words/min natural speaking pace
+# Word targets per explicit duration — based on ~150 words/min natural speaking pace
 STORY_WORD_TARGETS = {30: 75, 45: 115, 60: 155}
+
+# Speaking pace used for auto-duration calculation (words per second)
+WORDS_PER_SECOND = 150 / 60   # ≈ 2.5
 
 STORY_SYSTEM_PROMPT = (
     "You are a creative social media story writer who specialises in Instagram and WhatsApp Stories. "
@@ -597,20 +600,61 @@ STORY_SYSTEM_PROMPT = (
 )
 
 
-def generate_story_with_gpt(transcription: str, duration_seconds: int) -> str:
+def resolve_story_word_count(duration_seconds: int, actual_video_duration: Optional[float]) -> tuple[int, int]:
+    """
+    Return (target_word_count, effective_duration_seconds) for story generation.
+
+    Rules:
+      • duration_seconds == 0  →  AUTO mode: derive word count from actual video length.
+        Word count = round(actual_video_duration * WORDS_PER_SECOND), capped at 400 words.
+        If actual_video_duration is unavailable, fall back to 30 s target.
+      • duration_seconds in {30, 45, 60}  →  use the fixed lookup table.
+    """
+    if duration_seconds == 0:
+        # Auto mode — match actual video duration
+        if actual_video_duration and actual_video_duration > 0:
+            target_words   = min(round(actual_video_duration * WORDS_PER_SECOND), 400)
+            eff_duration   = round(actual_video_duration)
+        else:
+            # Fallback: no duration info → 30 s default
+            target_words   = STORY_WORD_TARGETS[30]
+            eff_duration   = 30
+        return target_words, eff_duration
+
+    # Explicit duration chosen by user
+    return STORY_WORD_TARGETS.get(duration_seconds, STORY_WORD_TARGETS[30]), duration_seconds
+
+
+def generate_story_with_gpt(
+    transcription: str,
+    duration_seconds: int,
+    actual_video_duration: Optional[float] = None,
+) -> tuple[str, int]:
     """
     Use OpenAI GPT to craft a Story script from *transcription*.
-    Target word count is derived from *duration_seconds*.
+
+    Args:
+        transcription         : Verbatim speech text from Whisper.
+        duration_seconds      : 0 = auto (use actual video length), or 30 / 45 / 60.
+        actual_video_duration : Whisper-reported video duration in seconds (used in auto mode).
+
+    Returns:
+        (story_text, effective_duration_seconds)
     """
-    client     = get_openai_client()
-    word_count = STORY_WORD_TARGETS.get(duration_seconds, 75)
+    client                        = get_openai_client()
+    target_words, eff_duration    = resolve_story_word_count(duration_seconds, actual_video_duration)
+
+    if duration_seconds == 0:
+        duration_label = f"match the video length (~{eff_duration} seconds)"
+    else:
+        duration_label = f"fit a {eff_duration}-second Story"
 
     user_prompt = (
         f"Below is a verbatim transcription of an Instagram Reel.\n\n"
         f"---\n{transcription}\n---\n\n"
         f"Write a captivating Story script based on this content. "
-        f"The script must be EXACTLY around {word_count} words so it fits a "
-        f"{duration_seconds}-second Story when read aloud at a natural pace. "
+        f"The script must be EXACTLY around {target_words} words so it can {duration_label} "
+        f"when read aloud at a natural pace. "
         f"Make it engaging, punchy, and ready to post as-is."
     )
 
@@ -621,17 +665,20 @@ def generate_story_with_gpt(transcription: str, duration_seconds: int) -> str:
             {"role": "user",   "content": user_prompt},
         ],
         temperature=0.85,
-        max_tokens=400,
+        max_tokens=600,
     )
-    return response.choices[0].message.content.strip()
+    return response.choices[0].message.content.strip(), eff_duration
 
 
 async def process_story_job(job_id: str, url: str, duration_seconds: int):
     """
-    Background pipeline:
+    Background pipeline for Instagram URL Story generation.
       1. Download Instagram video
       2. Extract audio & transcribe (Whisper)
       3. Generate Story script (GPT-4o-mini)
+
+    duration_seconds == 0  →  AUTO: story length matches actual video duration.
+    duration_seconds in {30,45,60}  →  explicit target chosen by user.
     """
     job     = jobs[job_id]
     tmp_dir = Path(tempfile.mkdtemp(prefix="story_"))
@@ -655,26 +702,34 @@ async def process_story_job(job_id: str, url: str, duration_seconds: int):
 
         job["step"] = "transcribing"
         logger.info(f"[{job_id}] Transcribing for story...")
-        whisper_result = transcribe_with_whisper(audio_path)
-        transcription  = whisper_result["text"]
+        whisper_result        = transcribe_with_whisper(audio_path)
+        transcription         = whisper_result["text"]
+        actual_video_duration = whisper_result.get("duration")   # float seconds from Whisper
 
         if not transcription.strip():
             raise RuntimeError("Transcription returned empty — cannot generate story.")
 
-        # ── Step 3: Generate Story ────────────────────────────────────────
+        # ── Step 3: Generate Story ─────────────────────────────────────────
+        mode_label = "auto" if duration_seconds == 0 else f"{duration_seconds}s"
         job["step"] = "generating_story"
-        logger.info(f"[{job_id}] Generating {duration_seconds}s story...")
-        story = generate_story_with_gpt(transcription, duration_seconds)
+        logger.info(f"[{job_id}] Generating story (mode={mode_label}, actual={actual_video_duration}s)...")
+
+        story, eff_duration = generate_story_with_gpt(
+            transcription,
+            duration_seconds,
+            actual_video_duration,
+        )
 
         job["status"] = "completed"
         job["step"]   = "done"
         job["result"] = {
-            "story":              story,
-            "duration_seconds":   duration_seconds,
-            "word_count":         len(story.split()),
-            "source_transcription": transcription,
+            "story":                  story,
+            "duration_seconds":       eff_duration,
+            "duration_mode":          "auto" if duration_seconds == 0 else "manual",
+            "word_count":             len(story.split()),
+            "source_transcription":   transcription,
         }
-        logger.info(f"[{job_id}] Story complete — {len(story.split())} words.")
+        logger.info(f"[{job_id}] Story complete — {len(story.split())} words, ~{eff_duration}s.")
 
     except Exception as e:
         job["status"] = "failed"
@@ -682,6 +737,88 @@ async def process_story_job(job_id: str, url: str, duration_seconds: int):
         logger.error(f"[{job_id}] Story job failed: {e}")
     finally:
         cleanup_files(tmp_dir)
+
+
+# ---------------------------------------------------------------------------
+# Story Generation Pipeline — Uploaded File (video or audio)
+# ---------------------------------------------------------------------------
+async def process_story_upload_job(
+    job_id: str,
+    source_path: str,
+    source_type: str,          # "video" | "audio"
+    duration_seconds: int,
+):
+    """
+    Background pipeline for Story generation from an uploaded file.
+    No download step — file is already saved on disk.
+
+      Video path:  extract_audio → transcribe (Whisper) → generate_story (GPT)
+      Audio path:  optimise_audio → transcribe (Whisper) → generate_story (GPT)
+    """
+    job     = jobs[job_id]
+    tmp_dir = Path(tempfile.mkdtemp(prefix="story_up_"))
+
+    try:
+        job["status"] = "processing"
+        ffmpeg_exe    = get_ffmpeg_executable()
+
+        # ── Step 1: Get audio ─────────────────────────────────────────────
+        if source_type == "video":
+            job["step"] = "extracting_audio"
+            logger.info(f"[{job_id}] Story-upload: extracting audio from video")
+            audio_path = extract_audio(Path(source_path), tmp_dir)
+
+        else:  # audio
+            job["step"] = "optimising_audio"
+            logger.info(f"[{job_id}] Story-upload: optimising audio file")
+            optimal = tmp_dir / "optimised.wav"
+            run_cmd([
+                ffmpeg_exe, "-y", "-i", source_path,
+                "-ar", "16000", "-ac", "1", "-acodec", "pcm_s16le",
+                str(optimal),
+            ])
+            audio_path = optimal
+
+        if not audio_path.exists():
+            raise RuntimeError("Audio preparation failed — file not found after ffmpeg.")
+
+        # ── Step 2: Transcribe ─────────────────────────────────────────────
+        job["step"] = "transcribing"
+        logger.info(f"[{job_id}] Story-upload: transcribing...")
+        whisper_result        = transcribe_with_whisper(audio_path)
+        transcription         = whisper_result["text"]
+        actual_media_duration = whisper_result.get("duration")   # float seconds from Whisper
+
+        if not transcription.strip():
+            raise RuntimeError("Transcription returned empty — cannot generate story.")
+
+        # ── Step 3: Generate Story ─────────────────────────────────────────
+        job["step"] = "generating_story"
+        logger.info(f"[{job_id}] Story-upload: generating {duration_seconds}s story...")
+        story, eff_duration = generate_story_with_gpt(
+            transcription,
+            duration_seconds,
+            actual_media_duration,   # passed through for consistent word-count calc
+        )
+
+        job["status"] = "completed"
+        job["step"]   = "done"
+        job["result"] = {
+            "story":                story,
+            "duration_seconds":     eff_duration,
+            "duration_mode":        "manual",
+            "word_count":           len(story.split()),
+            "source_transcription": transcription,
+        }
+        logger.info(f"[{job_id}] Story-upload complete — {len(story.split())} words.")
+
+    except Exception as e:
+        job["status"] = "failed"
+        job["error"]  = str(e)[:500]
+        logger.error(f"[{job_id}] Story-upload job failed: {e}")
+    finally:
+        cleanup_files(tmp_dir)
+        cleanup_files(source_path)   # remove uploaded file after processing
 
 
 # ---------------------------------------------------------------------------
@@ -771,10 +908,10 @@ async def serve_download(job_id: str):
 async def generate_story(
     background_tasks: BackgroundTasks,
     url: str = Form(...),
-    duration_seconds: int = Form(30),
+    duration_seconds: int = Form(0),
 ):
     """
-    Generate a social-media Story script from an Instagram Reel.
+    Generate a social-media Story script from an Instagram Reel URL.
 
     Steps (all in background):
       1. Download the Reel
@@ -783,18 +920,19 @@ async def generate_story(
 
     Args:
         url              : Instagram Reel / Post URL
-        duration_seconds : Target story length — 30, 45, or 60
+        duration_seconds : 0 = AUTO (story matches actual video length) [DEFAULT]
+                           30 / 45 / 60 = explicit target chosen by user
 
     Poll /api/status/{job_id} until status == "completed".
-    Result keys: story, duration_seconds, word_count, source_transcription
+    Result keys: story, duration_seconds, duration_mode, word_count, source_transcription
     """
     if not url.strip():
         raise HTTPException(status_code=400, detail="URL is required.")
 
-    if duration_seconds not in (30, 45, 60):
+    if duration_seconds not in (0, 30, 45, 60):
         raise HTTPException(
             status_code=400,
-            detail="duration_seconds must be 30, 45, or 60.",
+            detail="duration_seconds must be 0 (auto), 30, 45, or 60.",
         )
 
     job_id = str(uuid.uuid4())[:12]
@@ -808,6 +946,81 @@ async def generate_story(
     }
 
     background_tasks.add_task(process_story_job, job_id, url.strip(), duration_seconds)
+    return {"job_id": job_id, "status": "queued"}
+
+
+@app.post("/api/generate-story/upload")
+async def generate_story_upload(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    duration_seconds: int = Form(30),
+):
+    """
+    Generate a Story script from an uploaded video or audio file.
+
+    Steps (all in background):
+      1. Save uploaded file
+      2. Extract / optimise audio (FFmpeg)
+      3. Transcribe (Whisper)
+      4. Generate Story (GPT-4o-mini)
+
+    Args:
+        file             : Uploaded video (mp4/mov/mkv/webm/avi) or audio (mp3/wav/m4a/ogg/flac/aac)
+        duration_seconds : Target story length — 30, 45, or 60
+
+    Poll /api/status/{job_id} until status == "completed".
+    Result keys: story, duration_seconds, word_count, source_transcription
+    """
+    ext      = Path(file.filename).suffix.lower()
+    is_video = ext in ALLOWED_VIDEO_EXT
+    is_audio = ext in ALLOWED_AUDIO_EXT
+
+    if not is_video and not is_audio:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type: {ext}. Allowed: {list(ALLOWED_VIDEO_EXT | ALLOWED_AUDIO_EXT)}",
+        )
+
+    if duration_seconds not in (30, 45, 60):
+        raise HTTPException(
+            status_code=400,
+            detail="duration_seconds must be 30, 45, or 60.",
+        )
+
+    job_id    = str(uuid.uuid4())[:12]
+    save_path = UPLOAD_DIR / f"{job_id}{ext}"
+
+    try:
+        content = await file.read()
+        size_mb = len(content) / (1024 * 1024)
+        if size_mb > MAX_FILE_SIZE_MB:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File too large ({size_mb:.0f} MB). Max: {MAX_FILE_SIZE_MB} MB.",
+            )
+        with open(save_path, "wb") as f:
+            f.write(content)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
+
+    source_type = "video" if is_video else "audio"
+    jobs[job_id] = {
+        "status": "queued",
+        "step":   "initializing",
+        "result": None,
+        "error":  None,
+        "type":   "story_upload",
+    }
+
+    background_tasks.add_task(
+        process_story_upload_job,
+        job_id,
+        str(save_path),
+        source_type,
+        duration_seconds,
+    )
     return {"job_id": job_id, "status": "queued"}
 
 

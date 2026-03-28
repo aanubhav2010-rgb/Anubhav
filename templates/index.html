@@ -297,6 +297,117 @@
             .upload-zone { padding: 24px; }
             .meta-bar { flex-wrap: wrap; gap: 10px; }
         }
+
+        /* ───── Story Generation Feature ───────────────────────────────────── */
+        .story-generate-btn {
+            width: 100%;
+            margin-top: 12px;
+            padding: 14px;
+            background: #6c5ce7;
+            color: #fff;
+            font-weight: 700;
+            font-size: 13px;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.2s, opacity 0.2s;
+            font-family: inherit;
+        }
+        .story-generate-btn:hover:not(:disabled) { background: #7c6cf7; }
+        .story-generate-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .story-controls-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 14px;
+        }
+        .story-dur-label {
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+        .story-dur-pills {
+            display: flex;
+            gap: 7px;
+            flex-wrap: wrap;
+        }
+        .story-pill {
+            padding: 5px 14px;
+            border: 1.5px solid #6c5ce7;
+            background: transparent;
+            color: var(--text-dim);
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.18s;
+            white-space: nowrap;
+            font-family: inherit;
+        }
+        .story-pill.active,
+        .story-pill:hover {
+            background: #6c5ce7;
+            color: #fff;
+        }
+
+        .story-output-wrap {
+            margin-top: 14px;
+        }
+        .story-output-label {
+            font-size: 10px;
+            letter-spacing: 0.1em;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+        .story-status-line {
+            font-size: 13px;
+            color: var(--text-dim);
+            margin-bottom: 6px;
+            min-height: 18px;
+        }
+        .story-textarea {
+            width: 100%;
+            box-sizing: border-box;
+            background: var(--bg);
+            color: var(--text);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 14px;
+            font-size: 14px;
+            line-height: 1.65;
+            resize: vertical;
+            font-family: inherit;
+            outline: none;
+        }
+        .story-action-row {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+        }
+        .story-action-btn {
+            flex: 1;
+            padding: 9px 14px;
+            border: 1.5px solid #6c5ce7;
+            background: transparent;
+            color: var(--text-dim);
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.18s;
+            font-family: inherit;
+        }
+        .story-action-btn:hover {
+            background: #6c5ce7;
+            color: #fff;
+        }
     </style>
 </head>
 <body>
@@ -320,11 +431,12 @@
 
             <div class="url-actions" style="display:flex; gap:12px; flex-wrap:wrap; margin-top:16px; align-items:center;">
                 <label style="font-size:12px; color: var(--text-dim); display:flex; align-items:center; gap:6px;">
-                    Story length:
+                    Story Length:
                     <select id="story-duration" style="padding:10px 8px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-family:inherit; font-size:12px;">
-                        <option value="30">30s</option>
-                        <option value="45">45s</option>
-                        <option value="60">60s</option>
+                        <option value="0" selected>Auto (match video)</option>
+                        <option value="30">30 sec</option>
+                        <option value="45">45 sec</option>
+                        <option value="60">60 sec</option>
                     </select>
                 </label>
 
@@ -345,7 +457,27 @@
                 <div class="formats">MP4, MOV, MKV, WebM, AVI — max 500 MB</div>
                 <div class="file-name" id="video-filename"></div>
             </div>
-            <button class="btn" onclick="submitFile('video')">Transcribe</button>
+            <button id="video-transcribe-btn" class="btn" onclick="submitFile('video')">Transcribe</button>
+            
+            <!-- Story Generation for Video -->
+            <div id="video-story-controls" class="story-controls-row" style="display:none;">
+              <div class="story-dur-label">Story Length:</div>
+              <div class="story-dur-pills">
+                <button class="story-pill active" data-tab="video" data-dur="30">Upto 30 sec</button>
+                <button class="story-pill" data-tab="video" data-dur="45">Upto 45 sec</button>
+                <button class="story-pill" data-tab="video" data-dur="60">Upto 60 sec</button>
+              </div>
+            </div>
+            <button id="video-story-btn" class="story-generate-btn" style="display:none;">✨ GENERATE STORY</button>
+            <div id="video-story-output" class="story-output-wrap" style="display:none;">
+              <div class="story-output-label">Generated Story</div>
+              <div id="video-story-status" class="story-status-line"></div>
+              <textarea id="video-story-text" class="story-textarea" readonly rows="6" placeholder="Story will appear here..."></textarea>
+              <div class="story-action-row">
+                <button id="video-story-copy" class="story-action-btn">📋 Copy Story</button>
+                <button id="video-story-regen" class="story-action-btn">🔄 Regenerate</button>
+              </div>
+            </div>
         </div>
 
         <!-- Audio Upload -->
@@ -358,7 +490,27 @@
                 <div class="formats">MP3, WAV, M4A, OGG, FLAC, AAC — max 500 MB</div>
                 <div class="file-name" id="audio-filename"></div>
             </div>
-            <button class="btn" onclick="submitFile('audio')">Transcribe</button>
+            <button id="audio-transcribe-btn" class="btn" onclick="submitFile('audio')">Transcribe</button>
+            
+            <!-- Story Generation for Audio -->
+            <div id="audio-story-controls" class="story-controls-row" style="display:none;">
+              <div class="story-dur-label">Story Length:</div>
+              <div class="story-dur-pills">
+                <button class="story-pill active" data-tab="audio" data-dur="30">Upto 30 sec</button>
+                <button class="story-pill" data-tab="audio" data-dur="45">Upto 45 sec</button>
+                <button class="story-pill" data-tab="audio" data-dur="60">Upto 60 sec</button>
+              </div>
+            </div>
+            <button id="audio-story-btn" class="story-generate-btn" style="display:none;">✨ GENERATE STORY</button>
+            <div id="audio-story-output" class="story-output-wrap" style="display:none;">
+              <div class="story-output-label">Generated Story</div>
+              <div id="audio-story-status" class="story-status-line"></div>
+              <textarea id="audio-story-text" class="story-textarea" readonly rows="6" placeholder="Story will appear here..."></textarea>
+              <div class="story-action-row">
+                <button id="audio-story-copy" class="story-action-btn">📋 Copy Story</button>
+                <button id="audio-story-regen" class="story-action-btn">🔄 Regenerate</button>
+              </div>
+            </div>
         </div>
 
         <!-- Status -->
@@ -533,7 +685,8 @@
             var url = document.getElementById('reel-url').value.trim();
             if (!url) return showError('Please enter a URL.');
 
-            var duration = parseInt(document.getElementById('story-duration').value, 10) || 30;
+            var duration = parseInt(document.getElementById('story-duration').value, 10);
+            if (isNaN(duration)) duration = 0; // 0 means Auto (match source video)
 
             hideResults();
             disableButtons(true);
@@ -587,7 +740,11 @@
             var meta = document.getElementById('meta-bar');
             var parts = [];
             if (result.language) parts.push('<span>Language: <strong>' + result.language + '</strong></span>');
-            if (result.duration_seconds) parts.push('<span>Duration: <strong>' + Math.round(result.duration_seconds) + 's</strong></span>');
+            if (result.duration_seconds) {
+                var durText = Math.round(result.duration_seconds) + 's';
+                if (result.duration_mode === 'auto') durText += ' (auto)';
+                parts.push('<span>Duration: <strong>' + durText + '</strong></span>');
+            }
             if (result.word_count) parts.push('<span>Words: <strong>' + result.word_count + '</strong></span>');
             meta.innerHTML = parts.join('');
 
@@ -777,6 +934,179 @@
                 storyBtn.addEventListener('click', submitStory);
             }
         })();
+    </script>
+
+    <script>
+    (function () {
+        "use strict";
+
+        const IDS = {
+            video: {
+                fileInput: "video-file",
+                transcribeBtn: "video-transcribe-btn",
+                controls: "video-story-controls",
+                storyBtn: "video-story-btn",
+                outputWrap: "video-story-output",
+                statusLine: "video-story-status",
+                textarea: "video-story-text",
+                copyBtn: "video-story-copy",
+                regenBtn: "video-story-regen",
+            },
+            audio: {
+                fileInput: "audio-file",
+                transcribeBtn: "audio-transcribe-btn",
+                controls: "audio-story-controls",
+                storyBtn: "audio-story-btn",
+                outputWrap: "audio-story-output",
+                statusLine: "audio-story-status",
+                textarea: "audio-story-text",
+                copyBtn: "audio-story-copy",
+                regenBtn: "audio-story-regen",
+            },
+        };
+
+        const stepLabels = {
+            initializing: "⏳ Initializing...",
+            extracting_audio: "🎵 Extracting audio...",
+            optimising_audio: "🎵 Optimising audio...",
+            transcribing: "📝 Transcribing speech...",
+            generating_story: "✨ Crafting your story...",
+            done: "✅ Almost there...",
+        };
+
+        const selectedDuration = { video: 30, audio: 30 };
+
+        ["video", "audio"].forEach(tab => {
+            const ids = IDS[tab];
+            const el = {};
+            Object.entries(ids).forEach(([k, id]) => {
+                el[k] = document.getElementById(id);
+            });
+
+            if (!el.fileInput || !el.storyBtn) {
+                console.warn(`[Story-Upload] Missing elements for tab "${tab}". Check IDs in HTML.`);
+                return;
+            }
+
+            function syncControls() {
+                const hasFile = el.fileInput.files && el.fileInput.files.length > 0;
+                el.controls.style.display = hasFile ? "flex" : "none";
+                el.storyBtn.style.display = hasFile ? "block" : "none";
+                if (!hasFile) {
+                    el.outputWrap.style.display = "none";
+                    el.textarea.value = "";
+                }
+            }
+
+            el.fileInput.addEventListener("change", syncControls);
+
+            el.controls.querySelectorAll(`.story-pill[data-tab="${tab}"]`).forEach(pill => {
+                pill.addEventListener("click", function () {
+                    el.controls.querySelectorAll(`.story-pill[data-tab="${tab}"]`)
+                        .forEach(p => p.classList.remove("active"));
+                    this.classList.add("active");
+                    selectedDuration[tab] = parseInt(this.dataset.dur, 10);
+                });
+            });
+
+            async function runStoryJob() {
+                if (!el.fileInput.files || el.fileInput.files.length === 0) return;
+
+                setTabState(el, tab, "loading", "⏳ Uploading file...");
+
+                try {
+                    const fd = new FormData();
+                    fd.append("file", el.fileInput.files[0]);
+                    fd.append("duration_seconds", selectedDuration[tab]);
+
+                    const res = await fetch("/api/generate-story/upload", { method: "POST", body: fd });
+
+                    if (!res.ok) {
+                        const err = await res.json().catch(() => ({}));
+                        throw new Error(err.detail || `Server error (${res.status})`);
+                    }
+
+                    const { job_id } = await res.json();
+                    const finalJob = await pollUntilDone(job_id, el);
+
+                    if (finalJob.status === "completed") {
+                        const story = finalJob.result?.story || "";
+                        const words = finalJob.result?.word_count || story.split(" ").length;
+                        setTabState(
+                            el, tab, "done",
+                            `✅ Story ready — ${words} words (~${selectedDuration[tab]}s)`,
+                            story,
+                        );
+                    } else {
+                        throw new Error(finalJob.error || "Story generation failed.");
+                    }
+                } catch (err) {
+                    setTabState(el, tab, "error", `❌ Error: ${err.message}`, "");
+                }
+            }
+
+            el.storyBtn.addEventListener("click", runStoryJob);
+            el.regenBtn.addEventListener("click", runStoryJob);
+
+            el.copyBtn.addEventListener("click", async function () {
+                const text = el.textarea.value;
+                if (!text) return;
+                try {
+                    await navigator.clipboard.writeText(text);
+                    this.textContent = "✅ Copied!";
+                    setTimeout(() => (this.textContent = "📋 Copy Story"), 2000);
+                } catch {
+                    el.textarea.select();
+                    document.execCommand("copy");
+                }
+            });
+        });
+
+        async function pollUntilDone(jobId, el, interval = 2500, maxWait = 180000) {
+            const deadline = Date.now() + maxWait;
+
+            while (Date.now() < deadline) {
+                await sleep(interval);
+                const data = await fetch(`/api/status/${jobId}`).then(r => r.json());
+
+                if (data.step && stepLabels[data.step]) {
+                    el.statusLine.textContent = stepLabels[data.step];
+                }
+
+                if (data.status === "completed" || data.status === "failed") return data;
+            }
+            throw new Error("Timeout — story took too long. Try again.");
+        }
+
+        function setTabState(el, tab, state, message, storyText) {
+            el.outputWrap.style.display = "block";
+            el.statusLine.textContent = message;
+
+            const transcribeBtn = document.getElementById(IDS[tab].transcribeBtn);
+
+            if (state === "loading") {
+                el.storyBtn.textContent = "⏳ Generating...";
+                el.storyBtn.disabled = true;
+                el.regenBtn.disabled = true;
+                el.textarea.value = "";
+                if (transcribeBtn) transcribeBtn.disabled = true;
+            } else if (state === "done") {
+                el.storyBtn.textContent = "✨ GENERATE STORY";
+                el.storyBtn.disabled = false;
+                el.regenBtn.disabled = false;
+                el.textarea.value = storyText || "";
+                if (transcribeBtn) transcribeBtn.disabled = false;
+            } else if (state === "error") {
+                el.storyBtn.textContent = "✨ GENERATE STORY";
+                el.storyBtn.disabled = false;
+                el.regenBtn.disabled = false;
+                el.textarea.value = storyText || "";
+                if (transcribeBtn) transcribeBtn.disabled = false;
+            }
+        }
+
+        function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+    })();
     </script>
 </body>
 </html>

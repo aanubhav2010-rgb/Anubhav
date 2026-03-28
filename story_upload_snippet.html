@@ -1,0 +1,400 @@
+<!--
+  ╔══════════════════════════════════════════════════════════════════════════════╗
+  ║   ReelTranscribe — STORY FEATURE for Upload Video & Upload Audio tabs       ║
+  ║   Paste instructions inside, IDs match must be verified against index.html  ║
+  ╚══════════════════════════════════════════════════════════════════════════════╝
+
+  OVERVIEW
+  ────────
+  Ye snippet teen parts mein hai:
+
+    PART A  →  HTML  — Upload Video tab ke andar (TRANSCRIBE button ke baad)
+    PART B  →  HTML  — Upload Audio tab ke andar (TRANSCRIBE button ke baad)
+    PART C  →  CSS   — <style> block mein add karo
+    PART D  →  JS    — </body> se pehle add karo (ek hi script block dono tabs handle karta hai)
+
+  IMPORTANT: Apne actual IDs se match karo:
+    • Upload Video tab container  → id="video-panel"   (ya jo bhi hai)
+    • Upload Audio tab container  → id="audio-panel"   (ya jo bhi hai)
+    • Video Transcribe button     → id="video-transcribe-btn"
+    • Audio Transcribe button     → id="audio-transcribe-btn"
+    • Video file input            → id="video-file-input"   (hidden <input type="file">)
+    • Audio file input            → id="audio-file-input"   (hidden <input type="file">)
+-->
+
+
+<!-- ══════════════════════════════════════════════════════════
+     PART A — HTML: Upload Video tab mein, TRANSCRIBE ke baad
+     ══════════════════════════════════════════════════════════ -->
+
+<!-- Duration selector + Generate Story button (Video tab) -->
+<div id="video-story-controls" class="story-controls-row" style="display:none;">
+
+  <div class="story-dur-label">Story Length:</div>
+
+  <div class="story-dur-pills">
+    <button class="story-pill active" data-tab="video" data-dur="30">Upto 30 sec</button>
+    <button class="story-pill"        data-tab="video" data-dur="45">Upto 45 sec</button>
+    <button class="story-pill"        data-tab="video" data-dur="60">Upto 60 sec</button>
+  </div>
+
+</div>
+
+<button id="video-story-btn" class="story-generate-btn" style="display:none;">
+  ✨ GENERATE STORY
+</button>
+
+<!-- Story Output (Video tab) -->
+<div id="video-story-output" class="story-output-wrap" style="display:none;">
+  <div class="story-output-label">Generated Story</div>
+  <div id="video-story-status" class="story-status-line"></div>
+  <textarea id="video-story-text" class="story-textarea" readonly rows="6"
+            placeholder="Story will appear here..."></textarea>
+  <div class="story-action-row">
+    <button id="video-story-copy"  class="story-action-btn">📋 Copy Story</button>
+    <button id="video-story-regen" class="story-action-btn">🔄 Regenerate</button>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════════
+     PART B — HTML: Upload Audio tab mein, TRANSCRIBE ke baad
+     ══════════════════════════════════════════════════════════ -->
+
+<!-- Duration selector + Generate Story button (Audio tab) -->
+<div id="audio-story-controls" class="story-controls-row" style="display:none;">
+
+  <div class="story-dur-label">Story Length:</div>
+
+  <div class="story-dur-pills">
+    <button class="story-pill active" data-tab="audio" data-dur="30">Upto 30 sec</button>
+    <button class="story-pill"        data-tab="audio" data-dur="45">Upto 45 sec</button>
+    <button class="story-pill"        data-tab="audio" data-dur="60">Upto 60 sec</button>
+  </div>
+
+</div>
+
+<button id="audio-story-btn" class="story-generate-btn" style="display:none;">
+  ✨ GENERATE STORY
+</button>
+
+<!-- Story Output (Audio tab) -->
+<div id="audio-story-output" class="story-output-wrap" style="display:none;">
+  <div class="story-output-label">Generated Story</div>
+  <div id="audio-story-status" class="story-status-line"></div>
+  <textarea id="audio-story-text" class="story-textarea" readonly rows="6"
+            placeholder="Story will appear here..."></textarea>
+  <div class="story-action-row">
+    <button id="audio-story-copy"  class="story-action-btn">📋 Copy Story</button>
+    <button id="audio-story-regen" class="story-action-btn">🔄 Regenerate</button>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════════
+     PART C — CSS: apne <style> block mein paste karo
+     ══════════════════════════════════════════════════════════ -->
+<style>
+/* ── Story Generate Button ──────────────────────────────────────────────── */
+.story-generate-btn {
+  width: 100%;
+  margin-top: 12px;
+  padding: 14px;
+  background: #5b3fa0;
+  color: #fff;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background .2s, opacity .2s;
+}
+.story-generate-btn:hover:not(:disabled) { background: #6d4fbf; }
+.story-generate-btn:disabled             { opacity: .5; cursor: not-allowed; }
+
+/* ── Duration Row ───────────────────────────────────────────────────────── */
+.story-controls-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+.story-dur-label {
+  font-size: 11px;
+  letter-spacing: .08em;
+  color: #9b8ec4;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.story-dur-pills {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.story-pill {
+  padding: 5px 14px;
+  border: 1.5px solid #5b3fa0;
+  background: transparent;
+  color: #9b8ec4;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .18s;
+  white-space: nowrap;
+}
+.story-pill.active,
+.story-pill:hover {
+  background: #5b3fa0;
+  color: #fff;
+}
+
+/* ── Output Box ─────────────────────────────────────────────────────────── */
+.story-output-wrap {
+  margin-top: 14px;
+}
+.story-output-label {
+  font-size: 10px;
+  letter-spacing: .1em;
+  color: #9b8ec4;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.story-status-line {
+  font-size: 13px;
+  color: #9b8ec4;
+  margin-bottom: 6px;
+  min-height: 18px;
+}
+.story-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: #111;
+  color: #e8e8e8;
+  border: 1px solid #3d2e6b;
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 14px;
+  line-height: 1.65;
+  resize: vertical;
+  font-family: inherit;
+  outline: none;
+}
+.story-action-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.story-action-btn {
+  flex: 1;
+  padding: 9px 14px;
+  border: 1.5px solid #5b3fa0;
+  background: transparent;
+  color: #c4b8f0;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .18s;
+}
+.story-action-btn:hover { background: #3b2270; color: #fff; }
+</style>
+
+
+<!-- ══════════════════════════════════════════════════════════
+     PART D — JS: </body> se pehle paste karo
+     ══════════════════════════════════════════════════════════ -->
+<script>
+(function () {
+  "use strict";
+
+  /* ─── Config: apne actual element IDs se match karo ───────────────────── */
+  const IDS = {
+    video: {
+      fileInput:    "video-file-input",      // <input type="file"> for video
+      transcribeBtn:"video-transcribe-btn",  // existing Transcribe button
+      controls:     "video-story-controls",  // duration pills row
+      storyBtn:     "video-story-btn",       // Generate Story button
+      outputWrap:   "video-story-output",    // output container
+      statusLine:   "video-story-status",    // step text
+      textarea:     "video-story-text",      // story output textarea
+      copyBtn:      "video-story-copy",      // Copy button
+      regenBtn:     "video-story-regen",     // Regenerate button
+    },
+    audio: {
+      fileInput:    "audio-file-input",      // <input type="file"> for audio
+      transcribeBtn:"audio-transcribe-btn",  // existing Transcribe button
+      controls:     "audio-story-controls",
+      storyBtn:     "audio-story-btn",
+      outputWrap:   "audio-story-output",
+      statusLine:   "audio-story-status",
+      textarea:     "audio-story-text",
+      copyBtn:      "audio-story-copy",
+      regenBtn:     "audio-story-regen",
+    },
+  };
+
+  /* Detect which tab type a drop-zone event belongs to. */
+  /* If your HTML uses a single shared file input, adjust accordingly. */
+
+  const stepLabels = {
+    initializing:    "⏳ Initializing...",
+    extracting_audio:"🎵 Extracting audio...",
+    optimising_audio:"🎵 Optimising audio...",
+    transcribing:    "📝 Transcribing speech...",
+    generating_story:"✨ Crafting your story...",
+    done:            "✅ Almost there...",
+  };
+
+  /* ─── Per-tab selected duration ────────────────────────────────────────── */
+  const selectedDuration = { video: 30, audio: 30 };
+
+  /* ─── Init each tab ─────────────────────────────────────────────────────── */
+  ["video", "audio"].forEach(tab => {
+    const ids = IDS[tab];
+    const el  = {};
+    Object.entries(ids).forEach(([k, id]) => {
+      el[k] = document.getElementById(id);
+    });
+
+    /* If critical elements are missing, skip this tab silently */
+    if (!el.fileInput || !el.storyBtn) {
+      console.warn(`[Story-Upload] Missing elements for tab "${tab}". Check IDs in HTML.`);
+      return;
+    }
+
+    /* ── Show controls when a file is selected ─────────────────────────── */
+    function syncControls() {
+      const hasFile = el.fileInput.files && el.fileInput.files.length > 0;
+      el.controls.style.display  = hasFile ? "flex"  : "none";
+      el.storyBtn.style.display  = hasFile ? "block" : "none";
+      if (!hasFile) {
+        el.outputWrap.style.display = "none";
+        el.textarea.value = "";
+      }
+    }
+
+    el.fileInput.addEventListener("change", syncControls);
+
+    /* ── Duration pill selection ────────────────────────────────────────── */
+    el.controls.querySelectorAll(`.story-pill[data-tab="${tab}"]`).forEach(pill => {
+      pill.addEventListener("click", function () {
+        el.controls.querySelectorAll(`.story-pill[data-tab="${tab}"]`)
+          .forEach(p => p.classList.remove("active"));
+        this.classList.add("active");
+        selectedDuration[tab] = parseInt(this.dataset.dur, 10);
+      });
+    });
+
+    /* ── Core: call API and poll ────────────────────────────────────────── */
+    async function runStoryJob() {
+      if (!el.fileInput.files || el.fileInput.files.length === 0) return;
+
+      setTabState(el, tab, "loading", "⏳ Uploading file...");
+
+      try {
+        const fd = new FormData();
+        fd.append("file",             el.fileInput.files[0]);
+        fd.append("duration_seconds", selectedDuration[tab]);
+
+        const res = await fetch("/api/generate-story/upload", { method: "POST", body: fd });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || `Server error (${res.status})`);
+        }
+
+        const { job_id } = await res.json();
+
+        /* Poll */
+        const finalJob = await pollUntilDone(job_id, el);
+
+        if (finalJob.status === "completed") {
+          const story = finalJob.result?.story || "";
+          const words  = finalJob.result?.word_count || story.split(" ").length;
+          setTabState(
+            el, tab, "done",
+            `✅ Story ready — ${words} words (~${selectedDuration[tab]}s)`,
+            story,
+          );
+        } else {
+          throw new Error(finalJob.error || "Story generation failed.");
+        }
+
+      } catch (err) {
+        setTabState(el, tab, "error", `❌ Error: ${err.message}`, "");
+      }
+    }
+
+    el.storyBtn.addEventListener("click",   runStoryJob);
+    el.regenBtn.addEventListener("click",   runStoryJob);
+
+    /* ── Copy button ────────────────────────────────────────────────────── */
+    el.copyBtn.addEventListener("click", async function () {
+      const text = el.textarea.value;
+      if (!text) return;
+      try {
+        await navigator.clipboard.writeText(text);
+        this.textContent = "✅ Copied!";
+        setTimeout(() => (this.textContent = "📋 Copy Story"), 2000);
+      } catch {
+        el.textarea.select();
+        document.execCommand("copy");
+      }
+    });
+  }); // end forEach tab
+
+  /* ─── Shared poll helper ─────────────────────────────────────────────── */
+  async function pollUntilDone(jobId, el, interval = 2500, maxWait = 180000) {
+    const deadline = Date.now() + maxWait;
+
+    while (Date.now() < deadline) {
+      await sleep(interval);
+      const data = await fetch(`/api/status/${jobId}`).then(r => r.json());
+
+      if (data.step && stepLabels[data.step]) {
+        el.statusLine.textContent = stepLabels[data.step];
+      }
+
+      if (data.status === "completed" || data.status === "failed") return data;
+    }
+    throw new Error("Timeout — story took too long. Try again.");
+  }
+
+  /* ─── UI state machine ───────────────────────────────────────────────── */
+  function setTabState(el, tab, state, message, storyText) {
+    el.outputWrap.style.display = "block";
+    el.statusLine.textContent   = message;
+
+    const transcribeBtn = document.getElementById(IDS[tab].transcribeBtn);
+
+    if (state === "loading") {
+      el.storyBtn.textContent  = "⏳ Generating...";
+      el.storyBtn.disabled     = true;
+      el.regenBtn.disabled     = true;
+      el.textarea.value        = "";
+      if (transcribeBtn) transcribeBtn.disabled = true;
+
+    } else if (state === "done") {
+      el.storyBtn.textContent  = "✨ GENERATE STORY";
+      el.storyBtn.disabled     = false;
+      el.regenBtn.disabled     = false;
+      el.textarea.value        = storyText || "";
+      if (transcribeBtn) transcribeBtn.disabled = false;
+
+    } else if (state === "error") {
+      el.storyBtn.textContent  = "✨ GENERATE STORY";
+      el.storyBtn.disabled     = false;
+      el.regenBtn.disabled     = false;
+      el.textarea.value        = storyText || "";
+      if (transcribeBtn) transcribeBtn.disabled = false;
+    }
+  }
+
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+})();
+</script>
